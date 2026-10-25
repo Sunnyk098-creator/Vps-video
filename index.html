@@ -1,0 +1,415 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Full Screen Video Player</title>
+
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  color: white;
+}
+
+#player {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+#tapLayer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  z-index: 2;
+}
+
+.zone {
+  flex: 1;
+  height: 100%;
+}
+
+#controls {
+  position: absolute;
+  z-index: 4;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 35px 14px 16px;
+  background: linear-gradient(transparent, rgba(0,0,0,.85));
+  transition: opacity .25s;
+}
+
+#controls.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#progress {
+  width: 100%;
+  height: 4px;
+  accent-color: #ff1744;
+  cursor: pointer;
+  display: block;
+  margin-bottom: 13px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+button {
+  border: 0;
+  background: transparent;
+  color: white;
+  font-size: 23px;
+  cursor: pointer;
+  padding: 3px;
+}
+
+#time {
+  font-size: 13px;
+  flex: 1;
+}
+
+#speed {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,.7);
+  border-radius: 25px;
+  padding: 12px 20px;
+  font-size: 18px;
+  z-index: 5;
+  display: none;
+}
+
+#hint {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  background: rgba(0,0,0,.6);
+  padding: 12px;
+  border-radius: 12px;
+  opacity: 0;
+  transition: opacity .2s;
+  pointer-events: none;
+}
+
+#hint.show {
+  opacity: 1;
+}
+
+#start {
+  position: absolute;
+  z-index: 6;
+  background: rgba(0,0,0,.75);
+  padding: 18px 25px;
+  border-radius: 15px;
+  text-align: center;
+  font-size: 17px;
+}
+
+#start button {
+  display: block;
+  margin: 12px auto 0;
+  background: #ff1744;
+  border-radius: 25px;
+  padding: 10px 24px;
+  font-size: 16px;
+}
+</style>
+</head>
+
+<body>
+<div id="player">
+
+  <video id="video" playsinline preload="auto">
+    <source src="video_20261025_212345_edit.mp4" type="video/mp4">
+    Your browser does not support video.
+  </video>
+
+  <div id="tapLayer">
+    <div class="zone" id="leftZone"></div>
+    <div class="zone" id="rightZone"></div>
+  </div>
+
+  <div id="speed">2× Speed</div>
+  <div id="hint"></div>
+
+  <div id="start">
+    Video Player
+    <button id="startBtn">▶ Play Video</button>
+  </div>
+
+  <div id="controls">
+    <input id="progress" type="range" min="0" max="1000" value="0">
+
+    <div class="row">
+      <button id="playBtn" aria-label="Play or pause">▶</button>
+      <span id="time">00:00 / 00:00</span>
+      <button id="muteBtn" aria-label="Mute">🔊</button>
+      <button id="fullBtn" aria-label="Fullscreen">⛶</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const video = document.getElementById("video");
+const player = document.getElementById("player");
+const controls = document.getElementById("controls");
+const progress = document.getElementById("progress");
+const playBtn = document.getElementById("playBtn");
+const muteBtn = document.getElementById("muteBtn");
+const fullBtn = document.getElementById("fullBtn");
+const timeText = document.getElementById("time");
+const start = document.getElementById("start");
+const speedBadge = document.getElementById("speed");
+const hint = document.getElementById("hint");
+
+let hideTimer;
+let pressTimer;
+let longPressed = false;
+let seeking = false;
+let lastTap = { left: 0, right: 0 };
+
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds)) return "00:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  const h = Math.floor(m / 60);
+  const mm = String(m % 60).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function updateTime() {
+  timeText.textContent =
+    formatTime(video.currentTime) + " / " +
+    formatTime(video.duration);
+
+  if (!seeking && Number.isFinite(video.duration) && video.duration > 0) {
+    progress.value = video.currentTime / video.duration * 1000;
+  }
+}
+
+function showControls() {
+  controls.classList.remove("hidden");
+  clearTimeout(hideTimer);
+
+  if (!video.paused) {
+    hideTimer = setTimeout(() => {
+      controls.classList.add("hidden");
+    }, 3000);
+  }
+}
+
+function showHint(text) {
+  hint.textContent = text;
+  hint.classList.add("show");
+  setTimeout(() => hint.classList.remove("show"), 650);
+}
+
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) {
+      await player.requestFullscreen();
+    } else {
+      await document.exitFullscreen();
+    }
+  } catch (e) {
+    // Some mobile browsers require fullscreen from a user gesture.
+  }
+}
+
+async function startVideo() {
+  try {
+    await video.play();
+    start.style.display = "none";
+    showControls();
+    // Fullscreen may require another tap in some browsers.
+    if (!document.fullscreenElement) {
+      toggleFullscreen();
+    }
+  } catch (e) {
+    start.style.display = "block";
+    start.querySelector("button").textContent = "Tap to Play";
+  }
+}
+
+document.getElementById("startBtn").addEventListener("click", startVideo);
+
+playBtn.addEventListener("click", () => {
+  if (video.paused) {
+    video.play();
+  } else {
+    video.pause();
+  }
+  showControls();
+});
+
+video.addEventListener("play", () => {
+  playBtn.textContent = "❚❚";
+  start.style.display = "none";
+  showControls();
+});
+
+video.addEventListener("pause", () => {
+  playBtn.textContent = "▶";
+  controls.classList.remove("hidden");
+  clearTimeout(hideTimer);
+});
+
+video.addEventListener("ended", () => {
+  playBtn.textContent = "▶";
+  controls.classList.remove("hidden");
+});
+
+video.addEventListener("timeupdate", updateTime);
+video.addEventListener("loadedmetadata", updateTime);
+
+progress.addEventListener("input", () => {
+  seeking = true;
+  if (Number.isFinite(video.duration)) {
+    timeText.textContent =
+      formatTime(progress.value / 1000 * video.duration) +
+      " / " + formatTime(video.duration);
+  }
+});
+
+progress.addEventListener("change", () => {
+  if (Number.isFinite(video.duration)) {
+    video.currentTime = progress.value / 1000 * video.duration;
+  }
+  seeking = false;
+  updateTime();
+  showControls();
+});
+
+muteBtn.addEventListener("click", () => {
+  video.muted = !video.muted;
+  muteBtn.textContent = video.muted ? "🔇" : "🔊";
+  showControls();
+});
+
+fullBtn.addEventListener("click", toggleFullscreen);
+
+document.addEventListener("fullscreenchange", () => {
+  fullBtn.textContent = document.fullscreenElement ? "⛶" : "⛶";
+});
+
+// Double tap: left = rewind, right = forward.
+// Long press on either side = 2x playback speed.
+function setupZone(element, side) {
+  element.addEventListener("pointerdown", (event) => {
+    if (event.target !== element) return;
+
+    longPressed = false;
+    clearTimeout(pressTimer);
+
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      video.playbackRate = 2;
+      speedBadge.style.display = "block";
+      speedBadge.textContent = "2× Speed";
+    }, 350);
+  });
+
+  element.addEventListener("pointerup", (event) => {
+    clearTimeout(pressTimer);
+
+    if (longPressed) {
+      video.playbackRate = 1;
+      speedBadge.style.display = "none";
+      return;
+    }
+
+    const now = Date.now();
+    const previous = lastTap[side];
+
+    if (now - previous < 300) {
+      if (side === "left") {
+        video.currentTime = Math.max(0, video.currentTime - 10);
+        showHint("↶ 10 seconds");
+      } else {
+        video.currentTime = Math.min(
+          video.duration || Infinity,
+          video.currentTime + 10
+        );
+        showHint("10 seconds ↷");
+      }
+      lastTap[side] = 0;
+    } else {
+      lastTap[side] = now;
+      showControls();
+    }
+  });
+
+  element.addEventListener("pointercancel", () => {
+    clearTimeout(pressTimer);
+    if (longPressed) {
+      video.playbackRate = 1;
+      speedBadge.style.display = "none";
+    }
+  });
+
+  element.addEventListener("contextmenu", e => e.preventDefault());
+}
+
+setupZone(document.getElementById("leftZone"), "left");
+setupZone(document.getElementById("rightZone"), "right");
+
+// Tap center area to show/hide controls.
+player.addEventListener("click", (e) => {
+  if (e.target === video) {
+    if (controls.classList.contains("hidden")) {
+      showControls();
+    } else {
+      showControls();
+    }
+  }
+});
+
+video.addEventListener("error", () => {
+  start.style.display = "block";
+  start.firstChild.textContent = "Video not found. Check the MP4 filename.";
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && video.playbackRate === 2) {
+    video.playbackRate = 1;
+    speedBadge.style.display = "none";
+  }
+});
+</script>
+</body>
+</html>
